@@ -45,8 +45,19 @@ class LeapHandRot(VecTaskRot):
         self.reset_z_threshold = self.cfg['env']['reset_height_threshold']
         self.grasp_cache_name = self.cfg['env']['grasp_cache_name']
         self.evaluate = self.cfg['on_evaluation']
+        self.camera_width = cfg["env"]["camera_width"]
+        self.camera_height = cfg["env"]["camera_height"]
+        self.horizontal_fov = cfg["env"]["horizontal_fov"]
+        self.camera_pos_offset = cfg["env"]["camera_pos_offset"]
 
         super().__init__(cfg, rl_device, sim_device, graphics_device_id, headless)
+
+        # set up light parameters
+        light_index = 0 # set the first light
+        intensity = gymapi.Vec3(0.8, 0.8, 0.8)  # Example direction
+        ambient = gymapi.Vec3(0.4, 0.4, 0.4)
+        direction = gymapi.Vec3(0.5, 0.5, -1.0)  # Example direction
+        self.gym.set_light_parameters(self.sim, light_index, intensity, ambient, direction)
 
         self.debug_viz = self.cfg['env']['enableDebugVis']
         self.max_episode_length = self.cfg['env']['episodeLength']
@@ -143,6 +154,17 @@ class LeapHandRot(VecTaskRot):
         
         if self.debug_viz:
             self.setup_plot()
+
+        if "record_data" in self.cfg["env"]:
+            self.record_data = self.cfg["env"]["record_data"]
+            if self.record_data:
+                self.object_pose_history = []
+                # Add hand data recording lists
+                self.hand_base_pose_history = []
+                self.hand_joint_pose_history = []
+                # Image history
+                self.image_history = []
+                self.data_duration = self.cfg["env"]["data_duration"]
 
         if "debug" in self.cfg["env"]:
             self.obs_list = []
@@ -359,7 +381,7 @@ class LeapHandRot(VecTaskRot):
         self.leap_hand_dof_lower_limits = to_torch(self.leap_hand_dof_lower_limits, device=self.device)
         self.leap_hand_dof_upper_limits = to_torch(self.leap_hand_dof_upper_limits, device=self.device)
 
-        self.leap_hand_dof_lower_limits = self.leap_hand_dof_lower_limits.repeat((self.num_envs, 1))  
+        self.leap_hand_dof_lower_limits = self.leap_hand_dof_lower_limits.repeat((self.num_envs, 1))
         self.leap_hand_dof_lower_limits += (2 * torch.rand_like(self.leap_hand_dof_lower_limits) - 1) * self.cfg["env"]["randomization"]["joint_limits"]
         self.leap_hand_dof_upper_limits = self.leap_hand_dof_upper_limits.repeat((self.num_envs, 1))
         self.leap_hand_dof_upper_limits += (2 * torch.rand_like(self.leap_hand_dof_upper_limits) - 1) * self.cfg["env"]["randomization"]["joint_limits"]
@@ -385,9 +407,27 @@ class LeapHandRot(VecTaskRot):
         self.obj_scales = []
         self.object_friction_buf = torch.zeros((self.num_envs), device=self.device, dtype=torch.float)
 
+        # Camera setup
+        camera_props = gymapi.CameraProperties()
+        camera_props.width = self.camera_width
+        camera_props.height = self.camera_height
+        camera_props.horizontal_fov = self.horizontal_fov
+        camera_props.enable_tensors = True  # Set enable_tensors here since it is called at camera creation
+        self.camera_handles = []
+
         for i in range(num_envs):
             # create env instance
             env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
+
+            # Create a camera
+            camera_handle = self.gym.create_camera_sensor(env_ptr, camera_props)
+            self.camera_handles.append(camera_handle)
+
+            # Set camera transform
+            camera_transform = gymapi.Transform()
+            # This is now a constant camera offset
+            camera_transform.p = gymapi.Vec3(*[0.4, 0.2, 0.4])
+
             if self.aggregate_mode >= 1:
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies * 20, max_agg_shapes * 20, True)
 
@@ -397,13 +437,15 @@ class LeapHandRot(VecTaskRot):
             self.gym.set_actor_dof_properties(env_ptr, hand_actor, leap_hand_dof_props)
             hand_idx = self.gym.get_actor_index(env_ptr, hand_actor, gymapi.DOMAIN_SIM)
             self.hand_indices.append(hand_idx)
+            
+            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform) # MODIFIED - Use set camera transform initially
 
             # add object
             object_type_id = np.random.choice(len(self.object_type_list), p=self.object_type_prob)
             object_asset = self.object_asset_list[object_type_id]
 
             if self.cfg["env"]["disable_object_collision"]:
-                collision_group = -(i+2)
+                collision_group = -(i + 2)
             else:
                 collision_group = i
 
@@ -417,14 +459,15 @@ class LeapHandRot(VecTaskRot):
             self.object_indices.append(object_idx)
 
             obj_scale = self.base_obj_scale
-            
+
             if self.randomize_scale:
                 num_scales = len(self.randomize_scale_list)
-                obj_scale = np.random.uniform(self.randomize_scale_list[i % num_scales] - 0.025, self.randomize_scale_list[i % num_scales] + 0.025)
-                
+                obj_scale = np.random.uniform(self.randomize_scale_list[i % num_scales] - 0.025,
+                                              self.randomize_scale_list[i % num_scales] + 0.025)
+
                 if "randomize_scale_factor" in self.cfg["env"]:
                     obj_scale *= np.random.uniform(*self.cfg["env"]["randomize_scale_factor"])
-                
+
                 self.obj_scales.append(obj_scale)
             self.gym.set_actor_scale(env_ptr, object_handle, obj_scale)
 
@@ -456,14 +499,21 @@ class LeapHandRot(VecTaskRot):
             if self.aggregate_mode > 0:
                 self.gym.end_aggregate(env_ptr)
 
-            self.envs.append(env_ptr)
+            self.envs.append(self.gym.get_env(self.sim, i))
 
         self.obj_scales = torch.tensor(self.obj_scales, device=self.device)
-        self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs, 13)
+        self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs,
+                                                                                                             13)
         self.object_rb_handles = to_torch(self.object_rb_handles, dtype=torch.long, device=self.device)
         self.hand_indices = to_torch(self.hand_indices, dtype=torch.long, device=self.device)
         self.object_indices = to_torch(self.object_indices, dtype=torch.long, device=self.device)
-    
+
+        # get camera tensor
+        # camera_tensor = self.gym.get_camera_image_tensor(self.sim, self.envs) # OLD
+        # self.camera_tensor = gymtorch.wrap_tensor(camera_tensor) # OLD
+        # self.camera_tensor = self.camera_tensor.view(self.num_envs, self.camera_height, self.camera_width, 4) # R, G, B, A # OLD
+        self.camera_tensor = [None] * self.num_envs  # MODIFIED - initialize to a list
+
     def reset_idx(self, env_ids):
         if self.randomize_mass:
             lower, upper = self.randomize_mass_lower, self.randomize_mass_upper
@@ -738,22 +788,73 @@ class LeapHandRot(VecTaskRot):
             self.reset_idx(env_ids)
         self.compute_observations()
 
-        if self.viewer and self.debug_viz:
-            # draw axes on target object
-            self.gym.clear_lines(self.viewer)
-            self.gym.refresh_rigid_body_state_tensor(self.sim)
+        # Render all camera sensors
+        self.gym.render_all_camera_sensors(self.sim) # MODIFIED - render before accessing the images
 
+        if hasattr(self, 'record_data') and self.record_data and (self.global_counter * self.dt) < self.data_duration:
             for i in range(self.num_envs):
-                objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-                objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-                objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
-
-                p0 = self.object_pos[i].cpu().numpy()
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+                object_pose = {
+                    "position": self.object_pos[i].cpu().numpy(),
+                    "orientation": self.object_rot[i].cpu().numpy()
+                }
                 
-            self.plot_callback()
+                # Get hand base pose
+                hand_base_pose = {
+                    "position": self.hand_pos[i].cpu().numpy(),
+                    "orientation": self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
+                }
+                
+                # Get hand joint positions
+                hand_joint_poses = self.leap_hand_dof_pos[i].cpu().numpy()
+
+                # Get image
+                image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4)) # MODIFIED
+                image = torch.from_numpy(image).to(self.device) # MODIFIED
+                self.camera_tensor[i] = image # MODIFIED - Store the image as a tensor
+                image = image[:, :, :3].cpu().numpy() # Remove alpha channel
+                
+                # Set the camera location
+                hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
+                camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float) # MODIFIED - Set a relative position
+                camera_lookat = hand_position # MODIFIED - look at the hand
+                camera_position_cpu = camera_position.cpu().numpy()
+                camera_lookat_cpu = camera_lookat.cpu().numpy()
+                
+                self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu)) # MODIFIED - set camera location each step
+
+
+                # Add check for zeroed out image
+                if np.all(image == 0):
+                    print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
+                
+                self.object_pose_history.append(object_pose)
+                self.hand_base_pose_history.append(hand_base_pose)
+                self.hand_joint_pose_history.append(hand_joint_poses)
+                self.image_history.append(image)
+                
+            if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
+                print("Finished recording object pose, hand base pose, hand joints and images")
+                np.save("object_pose_history.npy", self.object_pose_history)
+                np.save("hand_base_pose_history.npy", self.hand_base_pose_history)
+                np.save("hand_joint_pose_history.npy", self.hand_joint_pose_history)
+                np.save("image_history.npy", self.image_history)
+                exit()
+            if self.viewer and self.debug_viz:
+                # draw axes on target object
+                self.gym.clear_lines(self.viewer)
+                self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+                for i in range(self.num_envs):
+                    objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
+                    objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
+                    objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
+
+                    p0 = self.object_pos[i].cpu().numpy()
+                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
+                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
+                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+                    
+                self.plot_callback()
 
     def plot_callback(self):
         self.fig.canvas.restore_region(self.bg)
