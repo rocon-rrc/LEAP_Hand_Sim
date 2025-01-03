@@ -164,6 +164,7 @@ class LeapHandRot(VecTaskRot):
                 self.hand_joint_pose_history = []
                 # Image history
                 self.image_history = []
+                self.depth_history = []
                 self.data_duration = self.cfg["env"]["data_duration"]
 
         if "debug" in self.cfg["env"]:
@@ -813,6 +814,11 @@ class LeapHandRot(VecTaskRot):
                 self.camera_tensor[i] = image # MODIFIED - Store the image as a tensor
                 image = image[:, :, :3].cpu().numpy() # Remove alpha channel
                 
+                # Get depth image
+                depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
+                depth_image = torch.from_numpy(depth_image).to(self.device) # MODIFIED
+                depth_image = depth_image.cpu().numpy() # store depth image
+                
                 # Set the camera location
                 hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
                 camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float) # MODIFIED - Set a relative position
@@ -831,13 +837,15 @@ class LeapHandRot(VecTaskRot):
                 self.hand_base_pose_history.append(hand_base_pose)
                 self.hand_joint_pose_history.append(hand_joint_poses)
                 self.image_history.append(image)
+                self.depth_history.append(depth_image)
                 
             if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
-                print("Finished recording object pose, hand base pose, hand joints and images")
+                print("Finished recording object pose, hand base pose, hand joints, images and depth images")
                 np.save("object_pose_history.npy", self.object_pose_history)
                 np.save("hand_base_pose_history.npy", self.hand_base_pose_history)
                 np.save("hand_joint_pose_history.npy", self.hand_joint_pose_history)
                 np.save("image_history.npy", self.image_history)
+                np.save("depth_history.npy", self.depth_history)
                 exit()
             if self.viewer and self.debug_viz:
                 # draw axes on target object
