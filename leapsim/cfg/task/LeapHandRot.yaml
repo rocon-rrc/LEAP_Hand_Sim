@@ -17,6 +17,12 @@ on_evaluation: False
 
 env:
   # environment basic
+  record_data: True
+  data_duration: 15
+  camera_width: 512
+  camera_height: 512
+  horizontal_fov: 70.0 # degrees, this is just an example
+  camera_pos_offset: [10, 10, 10]
   numEnvs: ${resolve_default:16384,${...num_envs}}
   numObservations: 102
   numActions: 16
