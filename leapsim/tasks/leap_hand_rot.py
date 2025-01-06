@@ -53,7 +53,7 @@ class LeapHandRot(VecTaskRot):
         super().__init__(cfg, rl_device, sim_device, graphics_device_id, headless)
 
         # set up light parameters
-        light_index = 0 # set the first light
+        light_index = 0  # set the first light
         intensity = gymapi.Vec3(0.8, 0.8, 0.8)  # Example direction
         ambient = gymapi.Vec3(0.4, 0.4, 0.4)
         direction = gymapi.Vec3(0.5, 0.5, -1.0)  # Example direction
@@ -165,6 +165,8 @@ class LeapHandRot(VecTaskRot):
                 # Image history
                 self.image_history = []
                 self.depth_history = []
+                # Contact data history
+                self.contact_history = [] # <---- ADDED CONTACT HISTORY
                 self.data_duration = self.cfg["env"]["data_duration"]
 
         if "debug" in self.cfg["env"]:
@@ -382,7 +384,7 @@ class LeapHandRot(VecTaskRot):
         self.leap_hand_dof_lower_limits = to_torch(self.leap_hand_dof_lower_limits, device=self.device)
         self.leap_hand_dof_upper_limits = to_torch(self.leap_hand_dof_upper_limits, device=self.device)
 
-        self.leap_hand_dof_lower_limits = self.leap_hand_dof_lower_limits.repeat((self.num_envs, 1))
+        self.leap_hand_dof_lower_limits = self.leap_hand_dof_lower_limits.repeat((self.num_envs, 1))  
         self.leap_hand_dof_lower_limits += (2 * torch.rand_like(self.leap_hand_dof_lower_limits) - 1) * self.cfg["env"]["randomization"]["joint_limits"]
         self.leap_hand_dof_upper_limits = self.leap_hand_dof_upper_limits.repeat((self.num_envs, 1))
         self.leap_hand_dof_upper_limits += (2 * torch.rand_like(self.leap_hand_dof_upper_limits) - 1) * self.cfg["env"]["randomization"]["joint_limits"]
@@ -439,14 +441,50 @@ class LeapHandRot(VecTaskRot):
             hand_idx = self.gym.get_actor_index(env_ptr, hand_actor, gymapi.DOMAIN_SIM)
             self.hand_indices.append(hand_idx)
             
-            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform) # MODIFIED - Use set camera transform initially
+            # set hand collision filters (we want hand to only collide with object)
+            hand_rigid_shape_props = self.gym.get_actor_rigid_shape_properties(env_ptr, hand_actor)
+            for shape_prop in hand_rigid_shape_props:
+                shape_prop.filter = i # assign hand rigid bodies to collision filter i
+
+            self.gym.set_actor_rigid_shape_properties(env_ptr, hand_actor, hand_rigid_shape_props)
+
+            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform)  # MODIFIED - Use set camera transform initially
 
             # add object
             object_type_id = np.random.choice(len(self.object_type_list), p=self.object_type_prob)
             object_asset = self.object_asset_list[object_type_id]
 
+             # Print rigid body info for each environment after they have been initialized
+            print("-------------------------------------------------")
+            print("Rigid body info for environment:", i)
+
+            # Get total rigid body count for the environment (assuming hands + objects only)
+            num_hand_bodies = self.gym.get_asset_rigid_body_count(self.hand_asset)
+            num_object_bodies = self.gym.get_asset_rigid_body_count(object_asset)
+
+            # Calculate starting index based on environment
+            num_bodies_per_env = num_hand_bodies + num_object_bodies
+            body_indices_start = i * num_bodies_per_env
+            body_indices_end = (i + 1) * num_bodies_per_env
+
+            # Print directly the index range
+            print(f"  Environment Rigid Body Index Range: [{body_indices_start}, {body_indices_end})")
+
+            # Calculate hand indexes
+            hand_start_index = body_indices_start
+            hand_end_index = body_indices_start + num_hand_bodies
+            print(f"  Hand Rigid Body Index Range: [{hand_start_index}, {hand_end_index})")
+            
+            # Calculate object indexes
+            object_start_index = hand_end_index
+            object_end_index = hand_end_index + num_object_bodies
+            print(f"  Object Rigid Body Index Range: [{object_start_index}, {object_end_index})")
+
+            print("-------------------------------------------------")
+
+            # set object collision filter so that object only collides with hand
             if self.cfg["env"]["disable_object_collision"]:
-                collision_group = -(i + 2)
+                collision_group = -(i+2)
             else:
                 collision_group = i
 
@@ -460,15 +498,14 @@ class LeapHandRot(VecTaskRot):
             self.object_indices.append(object_idx)
 
             obj_scale = self.base_obj_scale
-
+            
             if self.randomize_scale:
                 num_scales = len(self.randomize_scale_list)
-                obj_scale = np.random.uniform(self.randomize_scale_list[i % num_scales] - 0.025,
-                                              self.randomize_scale_list[i % num_scales] + 0.025)
-
+                obj_scale = np.random.uniform(self.randomize_scale_list[i % num_scales] - 0.025, self.randomize_scale_list[i % num_scales] + 0.025)
+                
                 if "randomize_scale_factor" in self.cfg["env"]:
                     obj_scale *= np.random.uniform(*self.cfg["env"]["randomize_scale_factor"])
-
+                
                 self.obj_scales.append(obj_scale)
             self.gym.set_actor_scale(env_ptr, object_handle, obj_scale)
 
@@ -500,21 +537,15 @@ class LeapHandRot(VecTaskRot):
             if self.aggregate_mode > 0:
                 self.gym.end_aggregate(env_ptr)
 
-            self.envs.append(self.gym.get_env(self.sim, i))
+            self.envs.append(env_ptr)
 
         self.obj_scales = torch.tensor(self.obj_scales, device=self.device)
-        self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs,
-                                                                                                             13)
+        self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs, 13)
         self.object_rb_handles = to_torch(self.object_rb_handles, dtype=torch.long, device=self.device)
         self.hand_indices = to_torch(self.hand_indices, dtype=torch.long, device=self.device)
         self.object_indices = to_torch(self.object_indices, dtype=torch.long, device=self.device)
-
-        # get camera tensor
-        # camera_tensor = self.gym.get_camera_image_tensor(self.sim, self.envs) # OLD
-        # self.camera_tensor = gymtorch.wrap_tensor(camera_tensor) # OLD
-        # self.camera_tensor = self.camera_tensor.view(self.num_envs, self.camera_height, self.camera_width, 4) # R, G, B, A # OLD
-        self.camera_tensor = [None] * self.num_envs  # MODIFIED - initialize to a list
-
+        self.camera_tensor = [None] * self.num_envs
+    
     def reset_idx(self, env_ids):
         if self.randomize_mass:
             lower, upper = self.randomize_mass_lower, self.randomize_mass_upper
@@ -790,55 +821,91 @@ class LeapHandRot(VecTaskRot):
         self.compute_observations()
 
         # Render all camera sensors
-        self.gym.render_all_camera_sensors(self.sim) # MODIFIED - render before accessing the images
+        self.gym.render_all_camera_sensors(self.sim)
 
         if hasattr(self, 'record_data') and self.record_data and (self.global_counter * self.dt) < self.data_duration:
+            # Get contact forces
+            self.gym.refresh_net_contact_force_tensor(self.sim) # Refresh to get latest data
+
             for i in range(self.num_envs):
+                contact_data_list = []
+                # net contact forces are shape (num_rigid_bodies, 3)
+
+                # Get rigid body indices for each object
+                num_bodies_per_env = self.rigid_body_states.shape[1]
+                body_indices_start = i * num_bodies_per_env # since rigid_body_states are a flattened tensor
+                body_indices_end = (i + 1) * num_bodies_per_env
+                net_contact_forces = self.contact_forces[i] # net_contact_force is shape (num_envs, num_rigid_bodies, 3), grab the data for this specific env
+
+                # We store force information for each rigid body
+                for body_index in range(num_bodies_per_env):
+                    force = net_contact_forces[body_index].cpu().numpy() # extract the forces for this body as a numpy array
+                    if np.any(force != 0): # if there was any force
+                        contact_info = {
+                            "force": force,
+                            "body_index": body_index
+                        }
+                        contact_data_list.append(contact_info)
+
+                # Convert contact_data_list into a numpy array with padding
+
+                if contact_data_list:
+                    max_contacts = num_bodies_per_env  # Maximum number of possible contacts per body (every body in the sim)
+                    padded_contacts = np.zeros((max_contacts, 4)) # Pad so that we have enough space to store all possible contacts
+                    for idx, contact in enumerate(contact_data_list):
+                      padded_contacts[idx, :3] = contact['force']
+                      padded_contacts[idx, 3] = contact['body_index'] # store body index
+                    contact_data_list = padded_contacts  # Reassign contact_data_list to the padded array
+                else:
+                    contact_data_list = np.zeros((num_bodies_per_env, 4))  # Create zero matrix if no contacts
+
+
+
                 object_pose = {
-                    "position": self.object_pos[i].cpu().numpy(),
-                    "orientation": self.object_rot[i].cpu().numpy()
-                }
-                
+                        "position": self.object_pos[i].cpu().numpy(),
+                        "orientation": self.object_rot[i].cpu().numpy()
+                    }
+
                 # Get hand base pose
                 hand_base_pose = {
                     "position": self.hand_pos[i].cpu().numpy(),
                     "orientation": self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
                 }
-                
+
                 # Get hand joint positions
                 hand_joint_poses = self.leap_hand_dof_pos[i].cpu().numpy()
 
                 # Get image
-                image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4)) # MODIFIED
-                image = torch.from_numpy(image).to(self.device) # MODIFIED
-                self.camera_tensor[i] = image # MODIFIED - Store the image as a tensor
-                image = image[:, :, :3].cpu().numpy() # Remove alpha channel
-                
+                image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4))
+                image = torch.from_numpy(image).to(self.device)
+                self.camera_tensor[i] = image
+                image = image[:, :, :3].cpu().numpy()
+
                 # Get depth image
                 depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
-                depth_image = torch.from_numpy(depth_image).to(self.device) # MODIFIED
-                depth_image = depth_image.cpu().numpy() # store depth image
-                
+                depth_image = torch.from_numpy(depth_image).to(self.device)
+                depth_image = depth_image.cpu().numpy()
+
                 # Set the camera location
                 hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
-                camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float) # MODIFIED - Set a relative position
-                camera_lookat = hand_position # MODIFIED - look at the hand
+                camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float)
+                camera_lookat = hand_position
                 camera_position_cpu = camera_position.cpu().numpy()
                 camera_lookat_cpu = camera_lookat.cpu().numpy()
-                
-                self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu)) # MODIFIED - set camera location each step
 
+                self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu))
 
                 # Add check for zeroed out image
                 if np.all(image == 0):
                     print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
-                
+
                 self.object_pose_history.append(object_pose)
                 self.hand_base_pose_history.append(hand_base_pose)
                 self.hand_joint_pose_history.append(hand_joint_poses)
                 self.image_history.append(image)
                 self.depth_history.append(depth_image)
-                
+                self.contact_history.append(contact_data_list)
+
             if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
                 print("Finished recording object pose, hand base pose, hand joints, images and depth images")
                 np.save("object_pose_history.npy", self.object_pose_history)
@@ -846,23 +913,25 @@ class LeapHandRot(VecTaskRot):
                 np.save("hand_joint_pose_history.npy", self.hand_joint_pose_history)
                 np.save("image_history.npy", self.image_history)
                 np.save("depth_history.npy", self.depth_history)
+                np.save("contact_history.npy", self.contact_history)
                 exit()
-            if self.viewer and self.debug_viz:
-                # draw axes on target object
-                self.gym.clear_lines(self.viewer)
-                self.gym.refresh_rigid_body_state_tensor(self.sim)
+        if self.viewer and self.debug_viz:
+            # draw axes on target object
+            self.gym.clear_lines(self.viewer)
+            self.gym.refresh_rigid_body_state_tensor(self.sim)
+            self.gym.refresh_net_contact_force_tensor(self.sim) # Refresh BEFORE drawing contacts
 
-                for i in range(self.num_envs):
-                    objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-                    objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-                    objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
+            for i in range(self.num_envs):
+                objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
+                objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
+                objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
 
-                    p0 = self.object_pos[i].cpu().numpy()
-                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
-                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
-                    self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
-                    
-                self.plot_callback()
+                p0 = self.object_pos[i].cpu().numpy()
+                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
+                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
+                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+                
+            self.plot_callback()
 
     def plot_callback(self):
         self.fig.canvas.restore_region(self.bg)
