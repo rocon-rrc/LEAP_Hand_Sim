@@ -835,7 +835,6 @@ class LeapHandRot(VecTaskRot):
     def _record_data_step(self):
         contact_color = gymapi.Vec3(0.0, 1.0, 0.0)
         for i in range(self.num_envs):
-            contact_data_list = []
             num_bodies_per_env = self.rigid_body_states.shape[1]
             body_indices_start = i * num_bodies_per_env
             net_contact_forces = self.contact_forces[i].cpu().numpy()
@@ -844,19 +843,11 @@ class LeapHandRot(VecTaskRot):
             plate_name_to_index = {name: idx for idx, name in enumerate(all_hand_names) if "plate_" in name}
             plate_indices = list(plate_name_to_index.values())
             
+            contact_data_list = []
             for body_index in range(num_bodies_per_env):
                 force = net_contact_forces[body_index]
-                if np.any(force != 0) and (body_index >= self.leap_hand_rb_count or body_index in plate_indices):
-                    contact_data_list.append({"force": force, "body_index": body_index})
-
-            # Pad contact data
-            max_contacts = num_bodies_per_env
-            padded_contacts = np.zeros((max_contacts, 4))
-            if contact_data_list:
-                for idx, contact in enumerate(contact_data_list):
-                    padded_contacts[idx, :3] = contact['force']
-                    padded_contacts[idx, 3] = contact['body_index']
-            contact_data_list = padded_contacts
+                if body_index in plate_indices:
+                     contact_data_list.append({"force": force, "body_index": body_index})
         
             # Store the data for the current environment
             object_pose = {
