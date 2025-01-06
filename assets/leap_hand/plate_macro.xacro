@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<robot name="plate_macro" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:macro name="plate" params="parent_link id x y z roll pitch yaw">
+    <link name="${parent_link}_sensor_${id}">
+        <visual>
+          <origin xyz="${x} ${y} ${z}" rpy="${roll} ${pitch} ${yaw}" />
+          <geometry>
+              <cylinder radius="0.001" length="0.0001"/>
+          </geometry>
+           <material name="plate_material">
+               <color rgba="0.0 1.0 0.0 1.0"/>
+           </material>
+        </visual>
+        <collision>
+          <origin xyz="${x} ${y} ${z}" rpy="${roll} ${pitch} ${yaw}" />
+            <geometry>
+              <cylinder radius="0.001" length="0.0001"/>
+           </geometry>
+        </collision>
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <mass value="0.00001" />
+            <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9" />
+        </inertial>
+    </link>
+
+    <joint name="${parent_link}_sensor_${id}_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <parent link="${parent_link}" />
+      <child link="${parent_link}_sensor_${id}" />
+    </joint>
+</xacro:macro>
+</robot>
