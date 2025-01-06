@@ -913,27 +913,19 @@ class LeapHandRot(VecTaskRot):
             net_contact_forces = self.contact_forces[i].cpu().numpy()
             hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
             hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
-           
-            print(f"--- Env {i} ---")
             for body_index in range(num_bodies_per_env):
                 force = net_contact_forces[body_index]
                 if np.any(force != 0) and (body_index >= self.leap_hand_rb_count or body_index in self.plate_indices[i]):
                    contact_data_list.append({"force": force, "body_index": body_index})
-                   if body_index >= self.leap_hand_rb_count:
-                        print(f"  Object Contact: body_index {body_index}, force: {force}")
-                   else:
-                        print(f"  Plate Contact: body_index {body_index}, force: {force}")
 
             for body_index in self.plate_indices[i]:
                 hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
                 hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
-                print(f"   Reset Color - env:{i}, body_index: {body_index}, b_idx:{body_index}, body_name:{hand_names[body_index]}")
                 self.gym.set_rigid_body_color(self.envs[i], hand_actor, body_index, gymapi.MESH_VISUAL, self.plate_original_colors[(i,body_index)])
             
             for contact in contact_data_list:
                 body_index = contact["body_index"]
                 if body_index in self.plate_indices[i]:
-                    print(f"    Setting Color - env:{i}, body_index: {body_index},  b_idx:{body_index}, body_name: {hand_names[body_index]}")
                     self.gym.set_rigid_body_color(self.envs[i], hand_actor, body_index, gymapi.MESH_VISUAL, contact_color)
 
     def _create_ground_plane(self):
