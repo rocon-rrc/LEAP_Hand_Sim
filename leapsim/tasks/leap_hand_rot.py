@@ -52,13 +52,6 @@ class LeapHandRot(VecTaskRot):
 
         super().__init__(cfg, rl_device, sim_device, graphics_device_id, headless)
 
-        # set up light parameters
-        light_index = 0  # set the first light
-        intensity = gymapi.Vec3(0.8, 0.8, 0.8)  # Example direction
-        ambient = gymapi.Vec3(0.4, 0.4, 0.4)
-        direction = gymapi.Vec3(0.5, 0.5, -1.0)  # Example direction
-        self.gym.set_light_parameters(self.sim, light_index, intensity, ambient, direction)
-
         self.debug_viz = self.cfg['env']['enableDebugVis']
         self.max_episode_length = self.cfg['env']['episodeLength']
         self.dt = self.sim_params.dt
@@ -159,16 +152,13 @@ class LeapHandRot(VecTaskRot):
             self.record_data = self.cfg["env"]["record_data"]
             if self.record_data:
                 self.object_pose_history = []
-                # Add hand data recording lists
+                self.plate_names = []
                 self.hand_base_pose_history = []
                 self.hand_joint_pose_history = []
-                # Image history
                 self.image_history = []
                 self.depth_history = []
-                # Contact data history
-                self.contact_history = [] # <---- ADDED CONTACT HISTORY
+                self.contact_history = []
                 self.data_duration = self.cfg["env"]["data_duration"]
-
         if "debug" in self.cfg["env"]:
             self.obs_list = []
             self.target_list = []
@@ -403,33 +393,32 @@ class LeapHandRot(VecTaskRot):
 
         self.hand_indices = []
         self.object_indices = []
+        self.plate_indices = []
+        self.plate_original_colors = {} # Initialize here
 
-        leap_hand_rb_count = self.gym.get_asset_rigid_body_count(self.hand_asset)
+        self.leap_hand_rb_count = self.gym.get_asset_rigid_body_count(self.hand_asset)
         object_rb_count = 1
-        self.object_rb_handles = list(range(leap_hand_rb_count, leap_hand_rb_count + object_rb_count))
+        self.object_rb_handles = list(range(self.leap_hand_rb_count, self.leap_hand_rb_count + object_rb_count))
         self.obj_scales = []
         self.object_friction_buf = torch.zeros((self.num_envs), device=self.device, dtype=torch.float)
 
-        # Camera setup
         camera_props = gymapi.CameraProperties()
         camera_props.width = self.camera_width
         camera_props.height = self.camera_height
         camera_props.horizontal_fov = self.horizontal_fov
-        camera_props.enable_tensors = True  # Set enable_tensors here since it is called at camera creation
+        camera_props.enable_tensors = True 
         self.camera_handles = []
 
         for i in range(num_envs):
             # create env instance
             env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
-
-            # Create a camera
+            
+            # Create Camera sensor
             camera_handle = self.gym.create_camera_sensor(env_ptr, camera_props)
             self.camera_handles.append(camera_handle)
-
-            # Set camera transform
             camera_transform = gymapi.Transform()
-            # This is now a constant camera offset
             camera_transform.p = gymapi.Vec3(*[0.4, 0.2, 0.4])
+            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform)
 
             if self.aggregate_mode >= 1:
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies * 20, max_agg_shapes * 20, True)
@@ -439,50 +428,64 @@ class LeapHandRot(VecTaskRot):
             self.gym.enable_actor_dof_force_sensors(env_ptr, hand_actor)
             self.gym.set_actor_dof_properties(env_ptr, hand_actor, leap_hand_dof_props)
             hand_idx = self.gym.get_actor_index(env_ptr, hand_actor, gymapi.DOMAIN_SIM)
-            self.hand_indices.append(hand_idx)
-            
-            # set hand collision filters (we want hand to only collide with object)
+            self.hand_indices.append(hand_idx) # This appends the actor index of the hand in the simulation environment
+
+             # Set collision filter for the hand
             hand_rigid_shape_props = self.gym.get_actor_rigid_shape_properties(env_ptr, hand_actor)
-            for shape_prop in hand_rigid_shape_props:
-                shape_prop.filter = i # assign hand rigid bodies to collision filter i
-
+            # Plate filter modification
+            hand_names = self.gym.get_actor_rigid_body_names(env_ptr, hand_actor)
+            plate_names = []
+            for name in hand_names:
+                if "plate_" in name:
+                    plate_names.append(name)     
+            plate_indices = []
+            for idx, name in enumerate(hand_names):
+                if "plate_" in name:
+                    plate_indices.append(idx)   
+            
+            # We are now looping through the indices for collision filtering based on the actor names
+            plate_indices_set = set(plate_indices)
+            for body_idx, (shape_start, shape_count) in enumerate(self.body_shape_indices):
+                for shape_index in range(shape_count):
+                    # We need to check that the current body we are filtering exists in the hand
+                    if body_idx < len(hand_names):
+                        hand_rigid_shape_props[shape_start + shape_index].filter = 1 if body_idx not in plate_indices_set else 1 
             self.gym.set_actor_rigid_shape_properties(env_ptr, hand_actor, hand_rigid_shape_props)
+            
+            # Extract indices for hand and plates at the environment level
+            hand_names = self.gym.get_actor_rigid_body_names(env_ptr, hand_actor) # get the name of all the rigid bodies of the hand at the environment level
+            plate_names = []
+            for name in hand_names:
+                if "plate_" in name:
+                    plate_names.append(name)     # filter all the plate names
+            plate_indices = []
+            for idx, name in enumerate(hand_names):
+                if "plate_" in name:
+                   plate_indices.append(idx)    # create an index for all the plate bodies
+            hand_indices = []
+            num_hand_bodies = self.gym.get_asset_rigid_body_count(self.hand_asset) # get the number of rigid bodies
+            for idx in range(num_hand_bodies):
+                if idx not in plate_indices:
+                   hand_indices.append(idx) # create a list of the indices of all the hand bodies.
+            print("-------------------------------------------------")
+            print("Asset Rigid Body Info:")
+            print("  Hand Links:")
+            for idx in hand_indices:
+                print(f"    '{hand_names[idx]}': index {idx}")
+            print("  Plate Links:")
+            for idx in plate_indices:
+               print(f"    '{hand_names[idx]}': index {idx}")
+            self.plate_indices.append(plate_indices) # append the list of plate indices for the environment.
 
-            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform)  # MODIFIED - Use set camera transform initially
+            # Store the original colors of the plate
+            for plate_idx in plate_indices:
+                hand_actor = self.gym.find_actor_handle(env_ptr, 'hand')
+                self.plate_original_colors[(i, plate_idx)] = self.gym.get_rigid_body_color(env_ptr, hand_actor, plate_idx, gymapi.MESH_VISUAL)
 
-            # add object
+            # Add object
             object_type_id = np.random.choice(len(self.object_type_list), p=self.object_type_prob)
             object_asset = self.object_asset_list[object_type_id]
 
-             # Print rigid body info for each environment after they have been initialized
-            print("-------------------------------------------------")
-            print("Rigid body info for environment:", i)
-
-            # Get total rigid body count for the environment (assuming hands + objects only)
-            num_hand_bodies = self.gym.get_asset_rigid_body_count(self.hand_asset)
-            num_object_bodies = self.gym.get_asset_rigid_body_count(object_asset)
-
-            # Calculate starting index based on environment
-            num_bodies_per_env = num_hand_bodies + num_object_bodies
-            body_indices_start = i * num_bodies_per_env
-            body_indices_end = (i + 1) * num_bodies_per_env
-
-            # Print directly the index range
-            print(f"  Environment Rigid Body Index Range: [{body_indices_start}, {body_indices_end})")
-
-            # Calculate hand indexes
-            hand_start_index = body_indices_start
-            hand_end_index = body_indices_start + num_hand_bodies
-            print(f"  Hand Rigid Body Index Range: [{hand_start_index}, {hand_end_index})")
-            
-            # Calculate object indexes
-            object_start_index = hand_end_index
-            object_end_index = hand_end_index + num_object_bodies
-            print(f"  Object Rigid Body Index Range: [{object_start_index}, {object_end_index})")
-
-            print("-------------------------------------------------")
-
-            # set object collision filter so that object only collides with hand
             if self.cfg["env"]["disable_object_collision"]:
                 collision_group = -(i+2)
             else:
@@ -816,6 +819,61 @@ class LeapHandRot(VecTaskRot):
         self._refresh_gym()
         self.compute_reward(self.actions)
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if self.viewer and self.debug_viz:
+            contact_color = gymapi.Vec3(0.0, 1.0, 0.0)
+            
+            for i in range(self.num_envs):
+                contact_data_list = []
+                num_bodies_per_env = self.rigid_body_states.shape[1]
+                body_indices_start = i * num_bodies_per_env
+                body_indices_end = (i + 1) * num_bodies_per_env
+                net_contact_forces = self.contact_forces[i]
+                
+                # We store force information for each rigid body
+                for body_index in range(num_bodies_per_env):
+                   force = net_contact_forces[body_index].cpu().numpy() # extract the forces for this body as a numpy array
+
+                   if body_index >= self.leap_hand_rb_count and np.any(force != 0): # if there was any force in the object bodies (which always starts after the hand)
+                        contact_info = {
+                            "force": force,
+                            "body_index": body_index
+                        }
+                        contact_data_list.append(contact_info)
+                   elif body_index in self.plate_indices[i] and np.any(force != 0): # if there was any force in the plate bodies (which we now have indices for)
+                        contact_info = {
+                            "force": force,
+                            "body_index": body_index
+                        }
+                        contact_data_list.append(contact_info)
+
+                # Modified Code Block in post_physics_step, sets contact to green
+                for contact in contact_data_list:
+                    body_index = contact["body_index"]
+                    if body_index in self.plate_indices[i]:
+                        hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
+                        hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
+
+                        for b_idx, body_name in enumerate(hand_names):
+                            if (body_indices_start + b_idx) == body_index:
+                                self.gym.set_rigid_body_color(self.envs[i], hand_actor, b_idx, gymapi.MESH_VISUAL, gymapi.Vec3(contact_color.x, contact_color.y, contact_color.z))
+                                break # Break since we found the correct index
+
+                #reset colors of plates
+                for body_index in self.plate_indices[i]:
+                    is_in_contact = False
+                    for contact in contact_data_list:
+                         if contact["body_index"] == body_index:
+                            is_in_contact = True
+                            break
+
+                    if not is_in_contact:
+                            hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
+                            hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
+                            for b_idx, body_name in enumerate(hand_names):
+                                if (body_indices_start + b_idx) == body_index:
+                                    original_color = self.plate_original_colors[(i, body_index)]
+                                    self.gym.set_rigid_body_color(self.envs[i], hand_actor, b_idx, gymapi.MESH_VISUAL, original_color)
+                                    break
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
         self.compute_observations()
@@ -828,83 +886,133 @@ class LeapHandRot(VecTaskRot):
             self.gym.refresh_net_contact_force_tensor(self.sim) # Refresh to get latest data
 
             for i in range(self.num_envs):
-                contact_data_list = []
-                # net contact forces are shape (num_rigid_bodies, 3)
+                    # Get contact data, reusing what was already calculated for recording
+                    contact_data_list = [] # ADDED CONTACT DATA LIST INITIALIZATION
+                    # net contact forces are shape (num_rigid_bodies, 3)
 
-                # Get rigid body indices for each object
-                num_bodies_per_env = self.rigid_body_states.shape[1]
-                body_indices_start = i * num_bodies_per_env # since rigid_body_states are a flattened tensor
-                body_indices_end = (i + 1) * num_bodies_per_env
-                net_contact_forces = self.contact_forces[i] # net_contact_force is shape (num_envs, num_rigid_bodies, 3), grab the data for this specific env
+                    # Get rigid body indices for each object
+                    num_bodies_per_env = self.rigid_body_states.shape[1]
+                    body_indices_start = i * num_bodies_per_env # since rigid_body_states are a flattened tensor
+                    body_indices_end = (i + 1) * num_bodies_per_env
+                    net_contact_forces = self.contact_forces[i] # net_contact_force is shape (num_envs, num_rigid_bodies, 3), grab the data for this specific env
 
-                # We store force information for each rigid body
-                for body_index in range(num_bodies_per_env):
-                    force = net_contact_forces[body_index].cpu().numpy() # extract the forces for this body as a numpy array
-                    if np.any(force != 0): # if there was any force
-                        contact_info = {
-                            "force": force,
-                            "body_index": body_index
-                        }
-                        contact_data_list.append(contact_info)
+                    # get the plate indices for the current env
+                    plate_indices = []
+                    plate_name_to_index = {} # ADDED PLATE INDEX INITIALIZATION
+                    hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand') # Find the actor handle in the environment
+                    all_hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
+                    for idx, name in enumerate(all_hand_names):
+                        if "plate_" in name:
+                            plate_indices.append(idx)
+                            plate_name_to_index[name] = idx
+                    
+                    # We store force information for each rigid body
+                    for body_index in range(num_bodies_per_env):
+                        force = net_contact_forces[body_index].cpu().numpy() # extract the forces for this body as a numpy array
+                        
+                        if body_index >= self.leap_hand_rb_count and np.any(force != 0): # if there was any force in the object bodies (which always starts after the hand)
+                            contact_info = {
+                                "force": force,
+                                "body_index": body_index
+                            }
+                            contact_data_list.append(contact_info)
 
-                # Convert contact_data_list into a numpy array with padding
+                        elif body_index in plate_indices and np.any(force != 0):
+                            contact_info = {
+                                "force": force,
+                                "body_index": body_index
+                            }
+                            contact_data_list.append(contact_info)
 
-                if contact_data_list:
-                    max_contacts = num_bodies_per_env  # Maximum number of possible contacts per body (every body in the sim)
-                    padded_contacts = np.zeros((max_contacts, 4)) # Pad so that we have enough space to store all possible contacts
-                    for idx, contact in enumerate(contact_data_list):
-                      padded_contacts[idx, :3] = contact['force']
-                      padded_contacts[idx, 3] = contact['body_index'] # store body index
-                    contact_data_list = padded_contacts  # Reassign contact_data_list to the padded array
-                else:
-                    contact_data_list = np.zeros((num_bodies_per_env, 4))  # Create zero matrix if no contacts
+                    # Modified Code Block in post_physics_step
+                    for contact in contact_data_list:
+                        body_index = contact["body_index"]
+
+                        if body_index in self.plate_indices: # Check if the body is a plate, using the plate_indices
+                            # find the plate body name
+                            hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
+                            for b_idx, body_name in enumerate(hand_names):
+                                if (body_indices_start + b_idx) == body_index:
+                                    self.gym.set_rigid_body_color(self.envs[i], hand_actor, b_idx, gymapi.MESH_VISUAL, gymapi.Vec3(contact_color.x, contact_color.y, contact_color.z))
+                                    break # Break since we found the correct index
+                                    
+
+                    for plate_name, plate_idx in plate_name_to_index.items():
+                        # need to find plate body index in environment
+                        for body_index in range(num_bodies_per_env):
+                            # get a list of plate bodies
+                                if body_index in plate_indices:
+                                    is_in_contact = False # Assume not in contact
+                                    for contact in contact_data_list:
+                                        if contact["body_index"] == body_index: # Check if any of the contact info is the same as the plate
+                                            is_in_contact = True
+                                            break
+                                    if not is_in_contact:
+                                    # find the plate's rigid body index in the list of rigid body names
+                                        for b_idx, body_name in enumerate(all_hand_names):
+                                            if body_name == plate_name:
+                                                original_color = self.plate_original_colors[(i, body_indices_start + b_idx)]
+                                                self.gym.set_rigid_body_color(self.envs[i], hand_actor, b_idx, gymapi.MESH_VISUAL, original_color)
+                                                break
+
+            # Convert contact_data_list into a numpy array with padding
+
+            if contact_data_list:
+                max_contacts = num_bodies_per_env  # Maximum number of possible contacts per body (every body in the sim)
+                padded_contacts = np.zeros((max_contacts, 4)) # Pad so that we have enough space to store all possible contacts
+                for idx, contact in enumerate(contact_data_list):
+                    padded_contacts[idx, :3] = contact['force']
+                    padded_contacts[idx, 3] = contact['body_index'] # store body index
+                contact_data_list = padded_contacts  # Reassign contact_data_list to the padded array
+            else:
+                contact_data_list = np.zeros((num_bodies_per_env, 4))  # Create zero matrix if no contacts
 
 
 
-                object_pose = {
-                        "position": self.object_pos[i].cpu().numpy(),
-                        "orientation": self.object_rot[i].cpu().numpy()
-                    }
-
-                # Get hand base pose
-                hand_base_pose = {
-                    "position": self.hand_pos[i].cpu().numpy(),
-                    "orientation": self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
+            object_pose = {
+                    "position": self.object_pos[i].cpu().numpy(),
+                    "orientation": self.object_rot[i].cpu().numpy()
                 }
 
-                # Get hand joint positions
-                hand_joint_poses = self.leap_hand_dof_pos[i].cpu().numpy()
+            # Get hand base pose
+            hand_base_pose = {
+                "position": self.hand_pos[i].cpu().numpy(),
+                "orientation": self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
+            }
 
-                # Get image
-                image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4))
-                image = torch.from_numpy(image).to(self.device)
-                self.camera_tensor[i] = image
-                image = image[:, :, :3].cpu().numpy()
+            # Get hand joint positions
+            hand_joint_poses = self.leap_hand_dof_pos[i].cpu().numpy()
 
-                # Get depth image
-                depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
-                depth_image = torch.from_numpy(depth_image).to(self.device)
-                depth_image = depth_image.cpu().numpy()
+            # Get image
+            image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4))
+            image = torch.from_numpy(image).to(self.device)
+            self.camera_tensor[i] = image
+            image = image[:, :, :3].cpu().numpy()
 
-                # Set the camera location
-                hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
-                camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float)
-                camera_lookat = hand_position
-                camera_position_cpu = camera_position.cpu().numpy()
-                camera_lookat_cpu = camera_lookat.cpu().numpy()
+            # Get depth image
+            depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
+            depth_image = torch.from_numpy(depth_image).to(self.device)
+            depth_image = depth_image.cpu().numpy()
 
-                self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu))
+            # Set the camera location
+            hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
+            camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float)
+            camera_lookat = hand_position
+            camera_position_cpu = camera_position.cpu().numpy()
+            camera_lookat_cpu = camera_lookat.cpu().numpy()
 
-                # Add check for zeroed out image
-                if np.all(image == 0):
-                    print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
+            self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu))
 
-                self.object_pose_history.append(object_pose)
-                self.hand_base_pose_history.append(hand_base_pose)
-                self.hand_joint_pose_history.append(hand_joint_poses)
-                self.image_history.append(image)
-                self.depth_history.append(depth_image)
-                self.contact_history.append(contact_data_list)
+            # Add check for zeroed out image
+            if np.all(image == 0):
+                print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
+
+            self.object_pose_history.append(object_pose)
+            self.hand_base_pose_history.append(hand_base_pose)
+            self.hand_joint_pose_history.append(hand_joint_poses)
+            self.image_history.append(image)
+            self.depth_history.append(depth_image)
+            self.contact_history.append(contact_data_list)
 
             if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
                 print("Finished recording object pose, hand base pose, hand joints, images and depth images")
@@ -919,7 +1027,7 @@ class LeapHandRot(VecTaskRot):
             # draw axes on target object
             self.gym.clear_lines(self.viewer)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
-            self.gym.refresh_net_contact_force_tensor(self.sim) # Refresh BEFORE drawing contacts
+            self.gym.refresh_net_contact_force_tensor(self.sim)
 
             for i in range(self.num_envs):
                 objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
@@ -1150,7 +1258,7 @@ class LeapHandRot(VecTaskRot):
         hand_asset_options = gymapi.AssetOptions()
         hand_asset_options.flip_visual_attachments = False
         hand_asset_options.fix_base_link = True
-        hand_asset_options.collapse_fixed_joints = True
+        hand_asset_options.collapse_fixed_joints = False
         hand_asset_options.disable_gravity = False
         hand_asset_options.thickness = 0.001
         hand_asset_options.angular_damping = 0.01
