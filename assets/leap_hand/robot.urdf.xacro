@@ -585,4 +585,40 @@
 <xacro:plate parent_link="fingertip_2"  id="11" x="-0.00975" y="-0.04" z="0.025" roll="0" pitch="-0.8" yaw="0.0"/>
 <xacro:plate parent_link="fingertip_3"  id="11" x="-0.00975" y="-0.04" z="0.025" roll="0" pitch="-0.8" yaw="0.0"/>
 
+<xacro:plate parent_link="palm_lower"   id="1"      x="-0.04" y="${-0.0925+(0.016*0)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="2"      x="-0.04" y="${-0.0925+(0.016*1)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="3"      x="-0.04" y="${-0.0925+(0.016*2)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="4"      x="-0.04" y="${-0.0925+(0.016*3)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="5"      x="-0.04" y="${-0.0925+(0.016*4)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="6"      x="-0.04" y="${-0.0925+(0.016*5)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="7"      x="-0.04" y="${-0.0925+(0.016*6)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="8"      x="-0.04" y="${-0.0925+(0.016*7)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="9"      x="-0.05" y="${-0.0925+(0.016*0)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="10"     x="-0.05" y="${-0.0925+(0.016*1)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="11"     x="-0.05" y="${-0.0925+(0.016*2)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="12"     x="-0.05" y="${-0.0925+(0.016*3)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="13"     x="-0.05" y="${-0.0925+(0.016*4)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="14"     x="-0.05" y="${-0.0925+(0.016*5)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="15"     x="-0.05" y="${-0.0925+(0.016*6)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="16"     x="-0.05" y="${-0.0925+(0.016*7)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="17"     x="-0.06" y="${-0.0925+(0.016*1)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="18"     x="-0.06" y="${-0.0925+(0.016*2)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="19"     x="-0.06" y="${-0.0925+(0.016*3)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="20"     x="-0.07" y="${-0.0925+(0.016*1)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="21"     x="-0.07" y="${-0.0925+(0.016*2)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="22"     x="-0.07" y="${-0.0925+(0.016*3)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="23"     x="-0.08" y="${-0.0925+(0.016*1)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="24"     x="-0.08" y="${-0.0925+(0.016*2)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+<xacro:plate parent_link="palm_lower"   id="25"     x="-0.08" y="${-0.0925+(0.016*3)}" z="-0.0352" roll="0" pitch="0" yaw="0.0"/>
+
+<xacro:plate parent_link="thumb_fingertip"  id="1" x="+0.0025" y="-0.035" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="2" x="-0.0025" y="-0.035" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="3" x="-0.0075" y="-0.035" z="-0.00225" roll="0.0" pitch="-0.2" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="4" x="+0.0025" y="-0.045" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="5" x="-0.0025" y="-0.045" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="6" x="-0.0075" y="-0.045" z="-0.00225" roll="0.0" pitch="-0.2" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="7" x="+0.0025" y="-0.055" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="8" x="-0.0025" y="-0.055" z="-0.00225" roll="0.0" pitch="0.0" yaw="0.0"/>
+<xacro:plate parent_link="thumb_fingertip"  id="9" x="-0.0075" y="-0.055" z="-0.0025" roll="0.2" pitch="-0.2" yaw="0.0"/>
+
 </robot>
