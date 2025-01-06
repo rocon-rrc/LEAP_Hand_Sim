@@ -833,55 +833,51 @@ class LeapHandRot(VecTaskRot):
 
 
     def _record_data_step(self):
-        contact_color = gymapi.Vec3(0.0, 1.0, 0.0)
         for i in range(self.num_envs):
             num_bodies_per_env = self.rigid_body_states.shape[1]
-            body_indices_start = i * num_bodies_per_env
             net_contact_forces = self.contact_forces[i].cpu().numpy()
             hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
             all_hand_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
             plate_name_to_index = {name: idx for idx, name in enumerate(all_hand_names) if "plate_" in name}
             plate_indices = list(plate_name_to_index.values())
             
-            contact_data_list = []
-            for body_index in range(num_bodies_per_env):
-                force = net_contact_forces[body_index]
-                if body_index in plate_indices:
-                     contact_data_list.append({"force": force, "body_index": body_index})
+            contact_forces_array = np.zeros((len(plate_indices), 3)) # Initialize with zeros
+            for idx, body_index in enumerate(plate_indices):
+                    contact_forces_array[idx] = net_contact_forces[body_index]
         
-            # Store the data for the current environment
-            object_pose = {
-                    "position": self.object_pos[i].cpu().numpy(),
-                    "orientation": self.object_rot[i].cpu().numpy()
-                }
 
-            hand_base_pose = {
-                "position": self.hand_pos[i].cpu().numpy(),
-                "orientation": self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
-            }
-            hand_joint_poses = self.leap_hand_dof_pos[i].cpu().numpy()
+            object_pose_array = np.concatenate([
+                    self.object_pos[i].cpu().numpy(),
+                    self.object_rot[i].cpu().numpy()
+                ])
+
+            hand_base_pose_array = np.concatenate([
+                    self.hand_pos[i].cpu().numpy(),
+                    self.root_state_tensor[self.hand_indices[i], 3:7].cpu().numpy()
+                ])
+            hand_joint_poses_array = self.leap_hand_dof_pos[i].cpu().numpy()
             image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR).reshape((self.camera_height, self.camera_width, 4))
             image = torch.from_numpy(image).to(self.device)
             self.camera_tensor[i] = image
-            image = image[:, :, :3].cpu().numpy()
+            image_array = image[:, :, :3].cpu().numpy()
             depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
             depth_image = torch.from_numpy(depth_image).to(self.device)
-            depth_image = depth_image.cpu().numpy()
+            depth_image_array = depth_image.cpu().numpy()
             hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
             camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float)
             camera_lookat = hand_position
             camera_position_cpu = camera_position.cpu().numpy()
             camera_lookat_cpu = camera_lookat.cpu().numpy()
             self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu))
-            if np.all(image == 0):
+            if np.all(image_array == 0):
                 print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
 
-            self.object_pose_history.append(object_pose)
-            self.hand_base_pose_history.append(hand_base_pose)
-            self.hand_joint_pose_history.append(hand_joint_poses)
-            self.image_history.append(image)
-            self.depth_history.append(depth_image)
-            self.contact_history.append(contact_data_list)
+            self.object_pose_history.append(object_pose_array)
+            self.hand_base_pose_history.append(hand_base_pose_array)
+            self.hand_joint_pose_history.append(hand_joint_poses_array)
+            self.image_history.append(image_array)
+            self.depth_history.append(depth_image_array)
+            self.contact_history.append(contact_forces_array)
         
         if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
             print("Finished recording object pose, hand base pose, hand joints, images and depth images")
