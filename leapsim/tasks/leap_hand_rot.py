@@ -24,6 +24,10 @@ import warnings
 import matplotlib.pyplot as plt
 from .base.vec_task import VecTaskRot
 from collections import deque
+import datetime
+import json
+from hydra.utils import to_absolute_path
+from omegaconf import DictConfig, ListConfig
 
 class LeapHandRot(VecTaskRot):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture=None, force_render=None):
@@ -872,12 +876,85 @@ class LeapHandRot(VecTaskRot):
         
         if ((self.global_counter + 1) * self.control_dt) >= self.data_duration:
             print("Finished recording object pose, hand base pose, hand joints, images and depth images")
-            np.save("object_pose_history.npy", self.object_pose_history)
-            np.save("hand_base_pose_history.npy", self.hand_base_pose_history)
-            np.save("hand_joint_pose_history.npy", self.hand_joint_pose_history)
-            np.save("image_history.npy", self.image_history)
-            np.save("depth_history.npy", self.depth_history)
-            np.save("contact_history.npy", self.contact_history)
+
+            # Create a timestamped directory
+            now = datetime.datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            save_dir = os.path.join("data", timestamp)
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Save all the .npy files in the created directory
+            np.save(os.path.join(save_dir, "object_pose_history.npy"), self.object_pose_history)
+            np.save(os.path.join(save_dir, "hand_base_pose_history.npy"), self.hand_base_pose_history)
+            np.save(os.path.join(save_dir, "hand_joint_pose_history.npy"), self.hand_joint_pose_history)
+            np.save(os.path.join(save_dir, "image_history.npy"), self.image_history)
+            np.save(os.path.join(save_dir, "depth_history.npy"), self.depth_history)
+            np.save(os.path.join(save_dir, "contact_history.npy"), self.contact_history)
+
+            # Get camera intrinsics and view matrix from projection matrix
+            camera_handle = self.camera_handles[i]
+            projection_matrix = np.matrix(self.gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
+            view_matrix = np.matrix(self.gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle))
+
+            # Extracting the intrinsics from projection matrix (assuming standard pinhole camera)
+            fx = float(projection_matrix[0, 0])
+            fy = float(projection_matrix[1, 1])
+            cx = float(projection_matrix[0, 2])
+            cy = float(projection_matrix[1, 2])
+
+            camera_intrinsics = {
+                "fx": fx,
+                "fy": fy,
+                "cx": cx,
+                "cy": cy
+            }
+            
+            # Convert view matrix to a list for json serialization
+            camera_view = view_matrix.tolist()
+
+            # Get rigid body indices and names
+            hand_actor = self.gym.find_actor_handle(self.envs[i], 'hand')
+            rigid_body_names = self.gym.get_actor_rigid_body_names(self.envs[i], hand_actor)
+            rigid_body_indices = {name: idx for idx, name in enumerate(rigid_body_names)}
+
+            # Save camera intrinsics and rigid body indices as json files
+            with open(os.path.join(save_dir, "camera_intrinsics.json"), "w") as f:
+                json.dump(camera_intrinsics, f, indent=4)
+            
+            with open(os.path.join(save_dir, "camera_view.json"), "w") as f:
+                json.dump(camera_view, f, indent=4)
+
+            with open(os.path.join(save_dir, "rigid_body_indices.json"), "w") as f:
+                json.dump(rigid_body_indices, f, indent=4)
+
+            # Convert the config to a regular dictionary recursively
+            config_filename = os.path.join(save_dir, "config.txt")
+
+            def convert_config(cfg):
+                if isinstance(cfg, ListConfig):
+                    cfg = list(cfg)
+                if isinstance(cfg, DictConfig):
+                     cfg = dict(cfg)
+                if isinstance(cfg, dict):
+                    new_dict = {}
+                    for k, v in cfg.items():
+                        new_dict[k] = convert_config(v)
+                    return new_dict
+                elif isinstance(cfg, list):
+                    new_list = []
+                    for item in cfg:
+                        new_list.append(convert_config(item))
+                    return new_list
+                elif isinstance(cfg, str) and "assets" in cfg:
+                    return to_absolute_path(cfg)
+                else:
+                    return cfg
+            
+            abs_cfg = convert_config(self.cfg)
+            with open(config_filename, 'w') as outfile:
+                json.dump(abs_cfg, outfile, indent=4)
+
+            print(f"Saved data to {save_dir}")
             exit()
 
     def _debug_visualization_step(self):
