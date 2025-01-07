@@ -144,9 +144,6 @@ class LeapHandRot(VecTaskRot):
             self.actions_mask = torch.tensor(self.cfg["env"]["actions_mask"], device=self.device)[None, :]
         else:
             self.actions_mask = torch.ones((1, self.num_leap_hand_dofs), device=self.device)
-        
-        if self.debug_viz:
-            self.setup_plot()
 
         if "record_data" in self.cfg["env"]:
             self.record_data = self.cfg["env"]["record_data"]
@@ -349,7 +346,7 @@ class LeapHandRot(VecTaskRot):
         ]
 
     def _create_envs(self, num_envs, spacing, num_per_row):
-        self._create_ground_plane()
+        # self._create_ground_plane()
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing)
 
@@ -416,9 +413,9 @@ class LeapHandRot(VecTaskRot):
             # Create Camera sensor
             camera_handle = self.gym.create_camera_sensor(env_ptr, camera_props)
             self.camera_handles.append(camera_handle)
-            camera_transform = gymapi.Transform()
-            camera_transform.p = gymapi.Vec3(*[0.4, 0.2, 0.4])
-            self.gym.set_camera_transform(camera_handle, env_ptr, camera_transform)
+            camera_position = gymapi.Vec3(*self.camera_pos_offset)
+            _,object_position = self._init_object_pose()
+            self.gym.set_camera_location(camera_handle, env_ptr, camera_position+object_position.p, object_position.p)
 
             if self.aggregate_mode >= 1:
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies * 20, max_agg_shapes * 20, True)
@@ -863,12 +860,6 @@ class LeapHandRot(VecTaskRot):
             depth_image = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_DEPTH).reshape((self.camera_height, self.camera_width))
             depth_image = torch.from_numpy(depth_image).to(self.device)
             depth_image_array = depth_image.cpu().numpy()
-            hand_position = self.root_state_tensor[self.hand_indices[i], 0:3]
-            camera_position = hand_position + torch.tensor([0.4, -0.2, 0.1], device=self.device, dtype=torch.float)
-            camera_lookat = hand_position
-            camera_position_cpu = camera_position.cpu().numpy()
-            camera_lookat_cpu = camera_lookat.cpu().numpy()
-            self.gym.set_camera_location(self.camera_handles[i], self.envs[i], gymapi.Vec3(*camera_position_cpu), gymapi.Vec3(*camera_lookat_cpu))
             if np.all(image_array == 0):
                 print(f"WARNING: Image data is all zeros at step {self.global_counter} env {i}")
 
