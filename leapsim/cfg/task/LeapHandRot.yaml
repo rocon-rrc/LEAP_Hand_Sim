@@ -18,11 +18,11 @@ on_evaluation: False
 env:
   # environment basic
   record_data: True
-  data_duration: 1
+  data_duration: 60
   camera_width: 512
   camera_height: 512
   horizontal_fov: 90.0 # degrees, this is just an example
-  camera_pos_offset: [-0.2, -0.2, 0.2]
+  camera_pos_offset: [0.0, 0.275, 0.2]
   numEnvs: ${resolve_default:16384,${...num_envs}}
   numObservations: 102
   numActions: 16
@@ -30,7 +30,7 @@ env:
   phase_period: 2
   exec_lag: 1
 
-  episodeLength: 400
+  episodeLength: 10000
   enableDebugVis: False
   aggregateMode: 1
 
